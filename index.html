@@ -139,26 +139,26 @@ function applyTheme(mode) {
 }
 
 const CLUB_LOGOS = {
-  "맨체스터 시티": "logos/맨체스터_시티.png",
-  "아스날": "logos/아스날.png",
-  "리버풀": "logos/리버풀.png",
-  "첼시": "logos/첼시.png",
-  "맨체스터 유나이티드": "logos/맨체스터_유나이티드.png",
-  "토트넘": "logos/토트넘.png",
-  "뉴캐슬": "logos/뉴캐슬.png",
-  "아스톤 빌라": "logos/아스톤_빌라.png",
-  "브라이튼": "logos/브라이튼.png",
-  "크리스탈 팰리스": "logos/크리스탈_팰리스.png",
-  "풀럼": "logos/풀럼.png",
-  "본머스": "logos/본머스.png",
-  "브렌트포드": "logos/브렌트포드.png",
-  "에버튼": "logos/에버튼.png",
-  "노팅엄 포레스트": "logos/노팅엄_포레스트.png",
-  "리즈 유나이티드": "logos/리즈_유나이티드.png",
-  "선덜랜드": "logos/선덜랜드.png",
-  "코번트리 시티": "logos/코번트리_시티.png",
-  "헐 시티": "logos/헐_시티.png",
-  "입스위치 타운": "logos/입스위치_타운.png",
+  "맨체스터 시티": "logos/man_city.png",
+  "아스날": "logos/arsenal.png",
+  "리버풀": "logos/liverpool.png",
+  "첼시": "logos/chelsea.png",
+  "맨체스터 유나이티드": "logos/man_utd.png",
+  "토트넘": "logos/tottenham.png",
+  "뉴캐슬": "logos/newcastle.png",
+  "아스톤 빌라": "logos/aston_villa.png",
+  "브라이튼": "logos/brighton.png",
+  "크리스탈 팰리스": "logos/crystal_palace.png",
+  "풀럼": "logos/fulham.png",
+  "본머스": "logos/bournemouth.png",
+  "브렌트포드": "logos/brentford.png",
+  "에버튼": "logos/everton.png",
+  "노팅엄 포레스트": "logos/nottm_forest.png",
+  "리즈 유나이티드": "logos/leeds.png",
+  "선덜랜드": "logos/sunderland.png",
+  "코번트리 시티": "logos/coventry.png",
+  "헐 시티": "logos/hull_city.png",
+  "입스위치 타운": "logos/ipswich.png",
 };
 const CLUB_ABBR = {
   "맨체스터 시티": "MCI",
@@ -1651,6 +1651,33 @@ async function fetchViaProxies(url, options = {}, timeoutMs = 4000) {
 }
 
 const TEAM_NAME_EN = {
+  // ── EPL 클럽 20팀 (2026-07-15 추가) ──────────────────────────────────
+  // isSameTeam()은 국가대표팀이 아니라 EPL 클럽 매칭에 전용으로 쓰이는데,
+  // 정작 이 사전엔 국가명만 있고 클럽 별칭이 아예 없었다. 그 결과 배당·부상자·
+  // 라인업·API-Football 매칭 등 isSameTeam을 쓰는 모든 기능이 외부 API의 영문
+  // 팀명과 매칭이 거의 항상 실패했을 것으로 보인다(국가명 사전만으로는 "맨체스터
+  // 시티"가 "Manchester City"와 매칭될 수 없음). 아래 20개 클럽 별칭 추가로 해결.
+  "맨체스터 시티":["Manchester City","Man City"],
+  "아스날":["Arsenal"],
+  "리버풀":["Liverpool"],
+  "첼시":["Chelsea"],
+  "맨체스터 유나이티드":["Manchester United","Man United","Man Utd"],
+  "토트넘":["Tottenham Hotspur","Tottenham","Spurs"],
+  "뉴캐슬":["Newcastle United","Newcastle"],
+  "아스톤 빌라":["Aston Villa"],
+  "브라이튼":["Brighton and Hove Albion","Brighton & Hove Albion","Brighton"],
+  "크리스탈 팰리스":["Crystal Palace"],
+  "풀럼":["Fulham"],
+  "본머스":["AFC Bournemouth","Bournemouth"],
+  "브렌트포드":["Brentford"],
+  "에버튼":["Everton"],
+  "노팅엄 포레스트":["Nottingham Forest","Nott'm Forest"],
+  "리즈 유나이티드":["Leeds United","Leeds"],
+  "선덜랜드":["Sunderland"],
+  "코번트리 시티":["Coventry City","Coventry"],
+  "헐 시티":["Hull City","Hull"],
+  "입스위치 타운":["Ipswich Town","Ipswich"],
+  // ── 국가대표팀 (기존) ────────────────────────────────────────────────
   "브라질":["Brazil"], "프랑스":["France"], "스페인":["Spain"], "아르헨티나":["Argentina"],
   "잉글랜드":["England"], "독일":["Germany"], "포르투갈":["Portugal"], "네덜란드":["Netherlands","Holland"],
   "벨기에":["Belgium"], "크로아티아":["Croatia"], "대한민국":["South Korea","Korea Republic","Korea","Korea South"],
@@ -1954,7 +1981,8 @@ async function fetchMatchOdds(home, away) {
 
   let mainTotals = null;
   let totalsSource = null;
-  if (RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
+  if (false && RUNTIME_CONFIG.oddsApiKey) {
     try {
       const oddsUrl = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h,totals&oddsFormat=decimal`;
       const res = await fetchViaProxies(oddsUrl, {}, 8000);
@@ -2251,7 +2279,8 @@ async function runDiagnostics(sampleHome = "대한민국", sampleAway = "체코"
 
   await sleep(600);
 
-  if (RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
+  if (false && RUNTIME_CONFIG.oddsApiKey) {
     try {
       const url = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h,totals&oddsFormat=decimal`;
       let j = null, detail = "";
@@ -2698,6 +2727,8 @@ function calcGroupStandings() {
     if (!standings[t]) standings[t] = {team:t,played:0,won:0,drawn:0,lost:0,gf:0,ga:0,gd:0,pts:0,
       form:[], homeW:0,homeD:0,homeL:0, awayW:0,awayD:0,awayL:0};
   };
+  // 결과가 하나도 없는 팀도 0점으로 미리 순위표에 올려둔다 (시즌 초반 빈 순위표 방지).
+  for (const t of getAllTeamsList()) initTeam(t);
   for (const match of SCHEDULE.filter(m=>m&&m.home&&m.away)) {
     const res = getStoredResult(match.home, match.away);
     if (!res) continue;
@@ -2739,7 +2770,8 @@ function calcGroupStandings() {
   for (const [team, stat] of Object.entries(standings)) {
     byGroup.PL.push({...stat});
   }
-  byGroup.PL.sort((a,b)=> b.pts-a.pts || b.gd-a.gd || b.gf-a.gf);
+  // 타이브레이커: 승점 → 골득실 → 다득점 → ELO(전력 기준, 시즌 초반 무결과 동점자 처리용)
+  byGroup.PL.sort((a,b)=> b.pts-a.pts || b.gd-a.gd || b.gf-a.gf || (getDynElo(b.team,"base")-getDynElo(a.team,"base")));
   return byGroup;
 }
 
@@ -5339,7 +5371,8 @@ async function fetchBookmakerComparison(home, away) {
       }
     } catch (e) { /* 다음 소스로 */ }
   }
-  if (RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
+  if (false && RUNTIME_CONFIG.oddsApiKey) {
     try {
       const oddsUrl = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h&oddsFormat=decimal`;
       const res = await fetchViaProxies(oddsUrl, {}, 8000);
@@ -7139,7 +7172,8 @@ function SquadTab({team, setTeam}) {
 function GroupStandingsPanel({eloVersion}) {
   const standings = useMemo(() => calcGroupStandings(), [eloVersion]);
   const groups = Object.keys(standings).sort();
-  if (!groups.length || !(standings.PL && standings.PL.length)) return (
+  const hasAnyResult = groups.some(g => standings[g].some(r => r.played > 0));
+  if (!groups.length) return (
     <Card style={{marginBottom:12}}>
       <div style={{fontSize:12.5, color:T.muted, textAlign:"center"}}>
         아직 경기 결과가 없습니다. 일정 탭에서 결과를 입력하면 순위가 자동 계산됩니다.
@@ -7148,6 +7182,13 @@ function GroupStandingsPanel({eloVersion}) {
   );
   return (
     <>
+      {!hasAnyResult && (
+        <Card style={{marginBottom:10}}>
+          <div style={{fontSize:12, color:T.gold, textAlign:"center"}}>
+            ⚠️ 아직 반영된 경기 결과가 없어, 팀 전력(ELO) 기준 예상 순위로 표시됩니다. 결과가 쌓이면 실제 승점순으로 바뀝니다.
+          </div>
+        </Card>
+      )}
       {groups.map(grp => (
         <Card key={grp} style={{marginBottom:10, padding:0, overflow:"hidden"}}>
           <div style={{padding:"10px 12px 6px", fontSize:13, fontWeight:800, color:T.cyan, borderBottom:`1px solid ${T.border}`}}>

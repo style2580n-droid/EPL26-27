@@ -191,6 +191,10 @@ const flag = n => !n ? "" : (CLUB_ABBR[n] || "");
 let TRANSFERS = {};
 // 파이프라인이 채워주는 두 팀간 과거 맞대결 기록. 키는 "팀A|||팀B"(가나다 정렬).
 let H2H = {};
+// 2026-07-16 추가: train_ml_ensemble.py가 EPL+6개 리그 통합으로 학습한 모델
+// 계수. null이면(학습 표본 부족 등) trainedMlProbs()가 null을 반환하고
+// predictMatch가 기존 randomForestWinProb(하드코딩 결정트리)로 자동 폴백한다.
+let ML_ENSEMBLE = null;
 
 const SQUADS = {
   "맨체스터 시티": {
@@ -878,6 +882,30 @@ function decisionTree5(f) { // Opta + 세트피스
   if (d > -12) return {homeWin:0.27, draw:0.28, awayWin:0.45};
   return {homeWin:0.17, draw:0.22, awayWin:0.61};
 }
+// trainedMlProbs: ML_ENSEMBLE(train_ml_ensemble.py 결과, 2026-07-16)이 있으면
+// 실제 데이터로 학습된 다항 로지스틱 회귀로 승/무/패를 낸다. 없으면 null을
+// 반환해서 predictMatch가 randomForestWinProb(아래, 하드코딩 결정트리 5개)로
+// 자동 폴백하게 한다 — 이 함수가 "교체"의 핵심이지만 실패해도 앱이 깨지지
+// 않도록 항상 폴백 경로를 살려둔다.
+function trainedMlProbs(eloDiff, xgDiff, hasXg) {
+  const m = ML_ENSEMBLE;
+  if (!m || !Array.isArray(m.coef) || !Array.isArray(m.intercept) || !Array.isArray(m.classes)) return null;
+  const feats = [eloDiff, xgDiff, hasXg];
+  const scores = m.classes.map((_, ci) => {
+    const row = m.coef[ci] || [];
+    let s = m.intercept[ci] || 0;
+    for (let i = 0; i < feats.length; i++) s += (row[i] || 0) * feats[i];
+    return s;
+  });
+  const maxS = Math.max(...scores);
+  const exps = scores.map(s => Math.exp(s - maxS));
+  const sumExp = exps.reduce((a, b) => a + b, 0) || 1;
+  const probs = exps.map(e => e / sumExp);
+  const byClass = {};
+  m.classes.forEach((c, i) => { byClass[c] = probs[i]; });
+  return { homeWin: byClass.H || 0, draw: byClass.D || 0, awayWin: byClass.A || 0 };
+}
+
 function randomForestWinProb(f) {
   const trees = [decisionTree1(f), decisionTree2(f), decisionTree3(f), decisionTree4(f), decisionTree5(f)];
   const sum = {homeWin:0, draw:0, awayWin:0};
@@ -1122,8 +1150,20 @@ function predictMatch(homeName, awayName, sims = 100000, liveOverride = {}) {
   let awayWinProb = (1 - winProbRaw) * (1 - drawProbRaw);
   let drawProb = drawProbRaw;
 
+  // xG는 원래 이 아래(현재 lambdaHome/lambdaAway 계산부)에서 조회했는데,
+  // ML 피처로도 필요해서 그보다 앞으로 당겨왔다 — 값 자체나 이후 로직은 그대로.
+  const hXgEarly = getDynElo(homeName, "xG"), hXgaEarly = getDynElo(homeName, "xGA");
+  const aXgEarly = getDynElo(awayName, "xG"), aXgaEarly = getDynElo(awayName, "xGA");
+  const mlHasXg = (Number.isFinite(hXgEarly) && Number.isFinite(hXgaEarly) &&
+                   Number.isFinite(aXgEarly) && Number.isFinite(aXgaEarly)) ? 1 : 0;
+  const mlXgDiff = mlHasXg ? (hXgEarly - aXgaEarly) - (aXgEarly - hXgaEarly) : 0;
+
+  // 2026-07-16: 실제 데이터로 학습된 ML_ENSEMBLE이 있으면 그걸 쓰고,
+  // 없으면(파이프라인 미실행/학습 표본 부족) 기존 하드코딩 결정트리 5개로 폴백.
+  const trainedMl = trainedMlProbs(eloDiff, mlXgDiff, mlHasXg);
+  const mlIsTrained = !!trainedMl;
   const features = buildFeatureVector(homeName, awayName, homeAdv);
-  const mlProbs = randomForestWinProb(features);
+  const mlProbs = trainedMl || randomForestWinProb(features);
   homeWinProb = bayesianBlend(homeWinProb, mlProbs.homeWin, 0.4);
   awayWinProb = bayesianBlend(awayWinProb, mlProbs.awayWin, 0.4);
   drawProb    = bayesianBlend(drawProb,    mlProbs.draw,    0.4);
@@ -1131,8 +1171,8 @@ function predictMatch(homeName, awayName, sims = 100000, liveOverride = {}) {
   homeWinProb /= normTotal; awayWinProb /= normTotal; drawProb /= normTotal;
 
   const hData = ELO[homeName] || {}, aData = ELO[awayName] || {};
-  const hXg = getDynElo(homeName, "xG"), hXga = getDynElo(homeName, "xGA");
-  const aXg = getDynElo(awayName, "xG"), aXga = getDynElo(awayName, "xGA");
+  const hXg = hXgEarly, hXga = hXgaEarly;
+  const aXg = aXgEarly, aXga = aXgaEarly;
   const homeLambdaMul = liveOverride.neutralVenue ? 1.00 : 1.08;
   const awayLambdaMul = liveOverride.neutralVenue ? 1.00 : 0.95;
   let lambdaHome = ((hXg + aXga) / 2) * homeLambdaMul;
@@ -1276,6 +1316,7 @@ function predictMatch(homeName, awayName, sims = 100000, liveOverride = {}) {
     },
     sims: safeSims,
     mlProbs, features,
+    mlIsTrained,  // true면 train_ml_ensemble.py 학습 모델이 쓰인 것, false면 하드코딩 결정트리 폴백
     timestamp: Date.now(),
   };
 }
@@ -6479,7 +6520,16 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
               <div style={{fontSize:11, color:T.muted, marginBottom:8}}>
                 기본 홈 이점 +{(result.explain.base.homeAdvantage*100).toFixed(0)}% · ELO 격차 {result.explain.base.eloDiff>0?"+":""}{result.explain.base.eloDiff}
                 {result.explain.isRivalry && <span style={{color:T.gold, fontWeight:700}}> · ⚔️ 라이벌 매치(접전 보정)</span>}
+                {result.mlIsTrained
+                  ? <span style={{color:T.purple, fontWeight:700}}> · 🤖 학습된 ML 모델 반영</span>
+                  : <span style={{color:T.dim}}> · 🤖 ML: 하드코딩 모델(학습 데이터 미연동)</span>}
               </div>
+              {ML_ENSEMBLE && ML_ENSEMBLE.n_samples && (
+                <div style={{fontSize:10.5, color:T.dim, marginBottom:8}}>
+                  ML 모델 학습 표본 {ML_ENSEMBLE.n_samples}건 · 홀드아웃 정확도 {(ML_ENSEMBLE.holdout_accuracy*100).toFixed(1)}%
+                  (베이스라인 {(ML_ENSEMBLE.holdout_baseline_accuracy*100).toFixed(1)}%) · {ML_ENSEMBLE.trained_at?.slice(0,10)} 학습
+                </div>
+              )}
               {(() => {
                 const fs = [...result.explain.factors].sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
                 const maxAbs = Math.max(...fs.map(f=>Math.abs(f.delta)), 0.01);
@@ -8621,7 +8671,7 @@ async function loadPipelineData() {
     const extract = new Function(text +
       "\nreturn {PIPELINE_ELO, PIPELINE_ADVANCED_STATS, PIPELINE_RECENT_FORM, " +
       "PIPELINE_SQUADS, PIPELINE_STATIC_LEADERBOARD, PIPELINE_LIVE_RESULTS, " +
-      "PIPELINE_TRANSFERS, PIPELINE_SCHEDULE, PIPELINE_H2H};");
+      "PIPELINE_TRANSFERS, PIPELINE_SCHEDULE, PIPELINE_H2H, PIPELINE_ML_ENSEMBLE};");
     const d = extract();
 
     if (d.PIPELINE_ELO) {
@@ -8686,6 +8736,11 @@ async function loadPipelineData() {
     }
     if (d.PIPELINE_H2H) {
       Object.assign(H2H, d.PIPELINE_H2H);
+    }
+    if (d.PIPELINE_ML_ENSEMBLE) {
+      ML_ENSEMBLE = d.PIPELINE_ML_ENSEMBLE;
+      console.log(`[pipeline] ML 앙상블 학습 모델 연동됨 (표본 ${ML_ENSEMBLE.n_samples}건, ` +
+        `홀드아웃 정확도 ${ML_ENSEMBLE.holdout_accuracy}) — 하드코딩 결정트리 대신 이걸 씁니다`);
     }
     console.log("[pipeline] 파이프라인 데이터 연동 완료");
   } catch (e) {

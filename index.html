@@ -826,15 +826,19 @@ function buildFeatureVector(home, away, homeAdv = 60) {
   const h = ELO[home] || {}, a = ELO[away] || {};
   const hSpi = SPI_RATINGS[home]?.spi ?? 50, aSpi = SPI_RATINGS[away]?.spi ?? 50;
   const hOpta = OPTA_RANKINGS[home]?.powerScore ?? 50, aOpta = OPTA_RANKINGS[away]?.powerScore ?? 50;
-  const hForm = (h.formArr||[]).reduce((s,x)=>s+x,0);
-  const aForm = (a.formArr||[]).reduce((s,x)=>s+x,0);
+  // 2026-07-25 수정: 기존 h.formArr/a.formArr는 초기 시드([0,0,0,0,0]) 이후 아무 코드도
+  // 갱신을 안 해서 항상 0-0=0이었음(사용자 확인 + 전수조사). getRollingXgForm은 _liveResults
+  // (실제 기록된 경기결과)를 실제로 읽어서 최근 5경기 xG차를 지수가중 평균내는 진짜 살아있는
+  // 함수라 이걸로 교체. 스케일은 기존 decisionTree4 임계값(±4,±12)과 맞추려고 *10.
+  const hForm = getRollingXgForm(home) ?? 0;
+  const aForm = getRollingXgForm(away) ?? 0;
   return {
     eloDiff: getDynElo(home,"base") - getDynElo(away,"base") + homeAdv,
     spiDiff: hSpi - aSpi,
     optaDiff: hOpta - aOpta,
     xgDiff: getDynElo(home,"xG") - getDynElo(away,"xG"),
     xgaDiff: getDynElo(away,"xGA") - getDynElo(home,"xGA"),
-    formDiff: hForm - aForm,
+    formDiff: (hForm - aForm) * 10,
     ppdaDiff: (a.ppda ?? 14) - (h.ppda ?? 14),
     fieldTiltDiff: (h.fieldTilt ?? 45) - (a.fieldTilt ?? 45),
     setPxgDiff: (h.setPxg ?? 0.25) - (a.setPxg ?? 0.25),
@@ -862,8 +866,8 @@ function decisionTree3(f) { // xG 공수 밸런스
   if (d > -0.6) return {homeWin:0.26, draw:0.29, awayWin:0.45};
   return {homeWin:0.15, draw:0.23, awayWin:0.62};
 }
-function decisionTree4(f) { // 폼 + 필드틸트
-  const d = f.formDiff * 8 + f.fieldTiltDiff;
+function decisionTree4(f) { // 폼 (2026-07-25: fieldTilt는 실측 소스가 없어서 제외, 순수 폼만)
+  const d = f.formDiff; // buildFeatureVector에서 이미 *10 스케일링됨
   if (d > 12)  return {homeWin:0.56, draw:0.24, awayWin:0.20};
   if (d > 4)   return {homeWin:0.46, draw:0.29, awayWin:0.25};
   if (d > -4)  return {homeWin:0.37, draw:0.31, awayWin:0.32};
@@ -878,8 +882,47 @@ function decisionTree5(f) { // Opta + 세트피스
   if (d > -12) return {homeWin:0.27, draw:0.28, awayWin:0.45};
   return {homeWin:0.17, draw:0.22, awayWin:0.61};
 }
+// ============================================================ 진짜 학습된 ML 앙상블 (2026-07-25 연결)
+// train_ml_ensemble.py가 EPL+6개리그 통합 데이터로 학습한 다항 로지스틱 회귀(소프트맥스)
+// 계수를 app_export.py가 2026-07-16부터 PIPELINE_ML_ENSEMBLE로 매일 내보내고 있었는데,
+// EPL_index.html은 이걸 한 번도 읽어들이는 코드가 없었음(8개리그 앱 multi_league_index.html엔
+// 이미 있던 로직을 여기로 이식). PIPELINE_ML_ENSEMBLE 없으면(학습 표본 부족/파이프라인
+// 미실행) null 반환 → 아래에서 기존 randomForestWinProb(하드코딩 트리)로 안전 폴백.
+function mlXgFeature(homeName, awayName) {
+  const h = { xG: getDynElo(homeName,"xG"), xGA: getDynElo(homeName,"xGA") };
+  const a = { xG: getDynElo(awayName,"xG"), xGA: getDynElo(awayName,"xGA") };
+  if (Number.isFinite(h.xG) && Number.isFinite(h.xGA) && Number.isFinite(a.xG) && Number.isFinite(a.xGA)) {
+    return { xgDiff: (h.xG - a.xGA) - (a.xG - h.xGA), hasXg: 1 };
+  }
+  return { xgDiff: 0, hasXg: 0 };
+}
+function mlEnsembleProbs(eloDiff, xgDiff, hasXg) {
+  const m = (typeof window !== "undefined") ? window.PIPELINE_ML_ENSEMBLE : null;
+  if (!m || !Array.isArray(m.coef) || !Array.isArray(m.intercept) || !Array.isArray(m.classes)) return null;
+  const feats = [eloDiff, xgDiff, hasXg];
+  const scores = m.classes.map((_, ci) => {
+    const row = m.coef[ci] || [];
+    let s = m.intercept[ci] || 0;
+    for (let i = 0; i < feats.length; i++) s += (row[i] || 0) * feats[i];
+    return s;
+  });
+  const maxS = Math.max(...scores);
+  const exps = scores.map(s => Math.exp(s - maxS));
+  const sumExp = exps.reduce((a,b) => a+b, 0) || 1;
+  const probs = exps.map(e => e / sumExp);
+  const out = { H:0, D:0, A:0 };
+  m.classes.forEach((c,i) => { out[c] = probs[i]; });
+  return out;
+}
 function randomForestWinProb(f) {
-  const trees = [decisionTree1(f), decisionTree2(f), decisionTree3(f), decisionTree4(f), decisionTree5(f)];
+  // 2026-07-25 수정: 기존엔 트리 5개(ELO/SPI/xG/폼+필드틸트/Opta+세트피스) 전부 평균냈는데,
+  // SPI_RATINGS·OPTA_RANKINGS가 20팀 전부 동일값이라 spiDiff·optaDiff가 항상 0 →
+  // decisionTree2(SPI)·decisionTree5(Opta+세트피스)가 어떤 매치업이든 똑같은 확률만
+  // 출력하고 있었음(사용자 확인 + EPL_고급지표_인수인계.md §5-6 근거).
+  // → 실제 데이터 없는 SPI/Opta 트리는 앙상블에서 제거, 진짜 차별화되는 3개 트리만 사용.
+  // (나중에 진짜 SPI/Opta 데이터를 구하면 그때 다시 추가하면 됨 — 지금은 없는 걸 있는
+  // 척 안 하는 게 맞다는 판단.)
+  const trees = [decisionTree1(f), decisionTree3(f), decisionTree4(f)];
   const sum = {homeWin:0, draw:0, awayWin:0};
   trees.forEach(t => { sum.homeWin+=t.homeWin; sum.draw+=t.draw; sum.awayWin+=t.awayWin; });
   const total = sum.homeWin + sum.draw + sum.awayWin;
@@ -1123,10 +1166,26 @@ function predictMatch(homeName, awayName, sims = 100000, liveOverride = {}) {
   let drawProb = drawProbRaw;
 
   const features = buildFeatureVector(homeName, awayName, homeAdv);
-  const mlProbs = randomForestWinProb(features);
-  homeWinProb = bayesianBlend(homeWinProb, mlProbs.homeWin, 0.4);
-  awayWinProb = bayesianBlend(awayWinProb, mlProbs.awayWin, 0.4);
-  drawProb    = bayesianBlend(drawProb,    mlProbs.draw,    0.4);
+  const { xgDiff: mlXgDiff, hasXg: mlHasXg } = mlXgFeature(homeName, awayName);
+  const realMlProbs = mlEnsembleProbs(eloDiff, mlXgDiff, mlHasXg);
+  let mlApplied = false, usedRealMl = false, mlProbs;
+  if (realMlProbs) {
+    // 진짜 학습된 모델이 있으면 이걸 우선 사용(하드코딩 트리보다 신뢰도 높음).
+    // 8개리그 앱과 동일하게 20% 가중치 — 시즌 초반 학습표본이 적을 수 있어 과신 방지.
+    mlProbs = { homeWin: realMlProbs.H, draw: realMlProbs.D, awayWin: realMlProbs.A }; // 아래 mlSkew·return용으로 통일된 모양 유지
+    const ML_WEIGHT = 0.2;
+    homeWinProb = homeWinProb * (1 - ML_WEIGHT) + realMlProbs.H * ML_WEIGHT;
+    awayWinProb = awayWinProb * (1 - ML_WEIGHT) + realMlProbs.A * ML_WEIGHT;
+    drawProb    = drawProb    * (1 - ML_WEIGHT) + realMlProbs.D * ML_WEIGHT;
+    mlApplied = true; usedRealMl = true;
+  } else {
+    // 폴백: 진짜 모델 없으면 기존 하드코딩 트리 3개(ELO/xG/폼) 블렌딩 유지
+    mlProbs = randomForestWinProb(features);
+    homeWinProb = bayesianBlend(homeWinProb, mlProbs.homeWin, 0.4);
+    awayWinProb = bayesianBlend(awayWinProb, mlProbs.awayWin, 0.4);
+    drawProb    = bayesianBlend(drawProb,    mlProbs.draw,    0.4);
+    mlApplied = true;
+  }
   let normTotal = homeWinProb + awayWinProb + drawProb;
   homeWinProb /= normTotal; awayWinProb /= normTotal; drawProb /= normTotal;
 
@@ -1278,7 +1337,7 @@ function predictMatch(homeName, awayName, sims = 100000, liveOverride = {}) {
       motivation: { home: +homeMotivation.toFixed(3), away: +awayMotivation.toFixed(3) },
     },
     sims: safeSims,
-    mlProbs, features,
+    mlProbs, features, usedRealMl, // usedRealMl=true면 진짜 학습된 모델(PIPELINE_ML_ENSEMBLE), false면 하드코딩 트리 폴백
     timestamp: Date.now(),
   };
 }
@@ -2580,28 +2639,16 @@ function getTravelFatiguePenalty(team, venueCity) {
   return -0.02 - (Math.min(km,12000)-5000)/7000 * 0.025;
 }
 
-const ADVANCED_STATS = {
-  "맨체스터 시티": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "아스날": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "리버풀": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "첼시": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "맨체스터 유나이티드": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "토트넘": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "뉴캐슬": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "아스톤 빌라": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "브라이튼": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "크리스탈 팰리스": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "풀럼": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "본머스": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "브렌트포드": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "에버튼": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "노팅엄 포레스트": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "리즈 유나이티드": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "선덜랜드": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "코번트리 시티": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "헐 시티": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-  "입스위치 타운": {psxg:1.35, psxgAllowed:1.35, bigChances:2.0, bigChancesAllowed:2.0, shotQuality:0.105, spCornerXg:0.12, spFreekickXg:0.05, spPenaltyXg:0.06, spCornerXgA:0.12, spFreekickXgA:0.05, spPenaltyXgA:0.06, aerialWinPct:50.0, headerGoals:0.15, headerGoalsAllowed:0.15, gkPsxgSaved:0.0, cleanSheetPct:30.0, savePct:70.0, homeXg:1.4, homeXga:1.3, awayXg:1.2, awayXga:1.5, euRotation:0},
-};
+// 2026-07-25 수정: 기존엔 EPL 20팀 전부 정확히 동일한 값(psxg:1.35, bigChances:2.0 등)이
+// 하드코딩되어 있어서 getAdvancedStats()가 항상 이 자리(1순위)에서 걸려버렸고, 그 결과
+// - "고급지표비교" 패널이 팀 구분 없이 항상 같은 숫자를 보여줬고(화면 버그)
+// - setPieceLambdaAdjust/headingLambdaAdjust/homeAwaySplitAdjust(실제 예측 보정 로직)도
+//   팀별로 달라져야 할 보정값이 모든 경기에 동일한 상수로 적용되고 있었음(예측 정확도 버그)
+// "FBref/FotMob 기준"이라는 라벨과 달리 실제로 FBref/FotMob에서 가져온 값이 아니라 임시
+// 플레이스홀더였음(EPL_고급지표_인수인계.md에 기록된 옵션 A 적용: 하드코딩 제거).
+// 팀명을 키로 실측값을 넣으면 그 팀만 1순위로 쓰이고, 없는 팀은 아래 getAdvancedStats()의
+// ELO/xG 기반 추정 공식(2순위, estimated:true로 정직하게 표시됨)이 자동으로 대신함.
+const ADVANCED_STATS = {};
 
 const _advCache = {};
 function getAdvancedStats(team) {
@@ -3413,31 +3460,60 @@ function starPlayerLambdaBoost(lambdaHome, lambdaAway, home, away) {
   return { lH, lA };
 }
 
+// ── 레이더차트용: 이번 시즌 실제 경기결과 기반 평균 득점/실점 (_liveResults 실측) ──
+function getSeasonGoalsAvg(team) {
+  try {
+    let gf = 0, ga = 0, n = 0;
+    for (const [k, v] of Object.entries(_liveResults || {})) {
+      if (!v || typeof v.home !== "number") continue;
+      const [h, a] = k.split("__");
+      if (h !== team && a !== team) continue;
+      const teamIsHome = (h === team);
+      gf += teamIsHome ? v.home : v.away;
+      ga += teamIsHome ? v.away : v.home;
+      n++;
+    }
+    if (!n) return null;
+    return { gf: gf/n, ga: ga/n, n };
+  } catch(e) { return null; }
+}
+
 function RadarPanel({ home, away }) {
   const [open, setOpen] = useState(true);
   const h = ELO[home], a = ELO[away];
   if (!h || !a) return null;
 
-  const allTeams = Object.values(ELO);
-  const minMax = (key, invert=false) => {
-    const vals = allTeams.map(t => t[key]).filter(v => typeof v === "number");
+  // 2026-07-25 수정: 기존 축(공격/수비/폼/스타/세트피스)은 atk/def/form/player/setPxg
+  // 필드를 썼는데, 이 5개 필드 전부 초기 시드 이후 갱신하는 코드가 없어서(전수조사 완료)
+  // 모든 팀이 항상 똑같은 값 → 레이더가 사실상 "득점력(xG)" 1개 축만 의미있었음.
+  // "스타"(STAR_PLAYERS)는 애초에 월드컵판에서 넘어온 국가대표 키라 EPL 클럽명이랑
+  // 안 맞아서 항상 undefined였고, "세트피스"(setPxg)는 대체할 실측 소스가 아예 없어서
+  // 두 축은 제거. "공격"/"수비"는 _liveResults(실제 기록된 경기결과)의 득점/실점 평균으로,
+  // "폼"은 getRollingXgForm(실제 최근5경기 xG차)으로 교체 — 전부 진짜 갱신되는 값.
+  const hGoals = getSeasonGoalsAvg(home), aGoals = getSeasonGoalsAvg(away);
+  const hForm = getRollingXgForm(home), aForm = getRollingXgForm(away);
+
+  const allTeams = Object.keys(ELO);
+  const minMax = (getter, invert=false) => {
+    const vals = allTeams.map(getter).filter(v => typeof v === "number" && Number.isFinite(v));
+    if (vals.length < 2) return () => 0.5;
     const lo = Math.min(...vals), hi = Math.max(...vals);
     return (v) => {
-      if (typeof v !== "number" || hi === lo) return 0.5;
+      if (typeof v !== "number" || !Number.isFinite(v) || hi === lo) return 0.5;
       const n = (v - lo) / (hi - lo);
       return invert ? 1 - n : n;
     };
   };
-  const nAtk = minMax("atk"), nDef = minMax("def"), nForm = minMax("form");
-  const nPlayer = minMax("player"), nXg = minMax("xG"), nSet = minMax("setPxg");
+  const nGf = minMax(t => getSeasonGoalsAvg(t)?.gf);
+  const nGa = minMax(t => getSeasonGoalsAvg(t)?.ga, true); // 실점은 적을수록 좋음(반전)
+  const nXg = minMax(t => ELO[t]?.xG);
+  const nForm = minMax(t => getRollingXgForm(t));
 
   const axes = [
-    { label:"공격", h:nAtk(h.atk), a:nAtk(a.atk) },
-    { label:"수비", h:nDef(h.def), a:nDef(a.def) },
-    { label:"득점력", h:nXg(h.xG), a:nXg(a.xG) },
-    { label:"폼", h:nForm(h.form), a:nForm(a.form) },
-    { label:"스타", h:nPlayer(h.player), a:nPlayer(a.player) },
-    { label:"세트피스", h:nSet(h.setPxg), a:nSet(a.setPxg) },
+    { label:"공격(실득점)", h:nGf(hGoals?.gf), a:nGf(aGoals?.gf) },
+    { label:"수비(실실점)", h:nGa(hGoals?.ga), a:nGa(aGoals?.ga) },
+    { label:"득점력(xG)", h:nXg(h.xG), a:nXg(a.xG) },
+    { label:"최근폼", h:nForm(hForm), a:nForm(aForm) },
   ];
 
   const size = 260, cx = size/2, cy = size/2, R = size/2 - 38;
@@ -3493,7 +3569,7 @@ function RadarPanel({ home, away }) {
             </svg>
           </div>
           <div style={{fontSize:9.5, color:T.dim, marginTop:6, lineHeight:1.5, textAlign:"center"}}>
-            본선 전 팀 대비 정규화한 ELO 세부 지표 (바깥쪽일수록 강함)
+            📐 실제 경기결과·xG 기반 리그 내 상대 순위 (바깥쪽일수록 강함) · 경기 표본 적으면 부정확할 수 있음
           </div>
         </>
       )}
@@ -4804,7 +4880,7 @@ function AdvancedStatsPanel({home, away}) {
         <Row label="슈팅 품질 (xG/슈팅)" hVal={hS?.shotQuality} aVal={aS?.shotQuality} fmt={v=>v?.toFixed?.(3)??"-"}/>
       </>}
       <div style={{fontSize:11, color:T.dim, marginTop:6, textAlign:"center"}}>
-        📊 FBref / FotMob 기준 · 초록색 = 비교 우위
+        📐 ELO·xG 기반 추정치 · 초록색 = 비교 우위
         {(hS?.estimated || aS?.estimated) && (
           <><br/><span style={{color:T.gold}}>
             ※ {[hS?.estimated && home, aS?.estimated && away].filter(Boolean).join(", ")}는 실측 데이터 부족 — ELO·xG 기반 추정값
@@ -5836,7 +5912,8 @@ function PredictionExplainCard({home, away, result}) {
   const mlSkew = (result.mlProbs?.homeWin ?? 0) - (result.mlProbs?.awayWin ?? 0);
   if (Math.abs(mlSkew) > 0.05) {
     const favored = mlSkew > 0 ? home : away;
-    items.push({icon:"🤖", text:`머신러닝 앙상블 모델도 ${favored} 쪽 승리 가능성을 더 높게 평가했습니다.`});
+    const mlLabel = result.usedRealMl ? "학습된 머신러닝 모델" : "보조 예측 규칙";
+    items.push({icon:"🤖", text:`${mlLabel}도 ${favored} 쪽 승리 가능성을 더 높게 평가했습니다.`});
   }
 
   if (result.liveApplied && result.marketProbs) {

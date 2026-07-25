@@ -6098,6 +6098,24 @@ function TodayWidget({favTeams, onSelectMatch}) {
   );
 }
 
+function CollapsibleSection({title, defaultOpen=false, children}) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div style={{marginTop:12}}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
+                padding:"12px 14px", borderRadius:10, border:`1px solid ${T.border}`,
+                background:T.surface, color:T.text, cursor:"pointer"}}>
+        <span style={{fontSize:13, fontWeight:800}}>{title}</span>
+        <span style={{fontSize:11.5, color:T.accent, fontWeight:700, flexShrink:0, marginLeft:8}}>
+          {open ? "▲ 접기" : "▼ 펼치기"}
+        </span>
+      </button>
+      {open && <div>{children}</div>}
+    </div>
+  );
+}
+
 function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStage,
                       result, loading, onPredict, onSave, favTeams, onSelectMatch}) {
   const swap = () => { const h=home; setHome(away); setAway(h); };
@@ -6260,16 +6278,18 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
             )}
           </Card>
 
-          <PredictionExplainCard home={home} away={away} result={result}/>
+          <CollapsibleSection title="🔍 예측 근거 & 컨텍스트">
+            <PredictionExplainCard home={home} away={away} result={result}/>
 
-          <AbsenceSummaryPanel home={home} away={away}/>
+            <AbsenceSummaryPanel home={home} away={away}/>
 
-          <LiveInPlayPanel home={home} away={away} lambdaHome={result.lambdaHome} lambdaAway={result.lambdaAway}/>
+            <LiveInPlayPanel home={home} away={away} lambdaHome={result.lambdaHome} lambdaAway={result.lambdaAway}/>
 
-          <OddsComparisonPanel home={home} away={away}
-            modelProbs={{home: result.homeWinProb, draw: result.drawProb, away: result.awayWinProb}}/>
+            <OddsComparisonPanel home={home} away={away}
+              modelProbs={{home: result.homeWinProb, draw: result.drawProb, away: result.awayWinProb}}/>
 
-          <ShareResultPanel home={home} away={away} result={result}/>
+            <ShareResultPanel home={home} away={away} result={result}/>
+          </CollapsibleSection>
 
           <Card style={{marginTop:12, textAlign:"center"}}>
             <SectionTitle sub="자체 모델이 가장 높은 확률로 예측한 단일 스코어">🎯 자체 분석 예상 스코어</SectionTitle>
@@ -6316,6 +6336,7 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
             })()}
           </Card>
 
+          <CollapsibleSection title="📊 상세 통계 (xG·득점분포·오버언더·핸디캡·마켓)">
           <div style={{display:"flex", gap:10, marginTop:12}}>
             <Card style={{flex:1, textAlign:"center"}}>
               <div style={{fontSize:11.5, color:T.muted}}>예상 기대득점 (xG)</div>
@@ -6501,7 +6522,9 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
             🎲 몬테카를로 {result.sims.toLocaleString()}회 · ELO+ML 앙상블 50% + 시뮬레이션 50% 블렌딩<br/>
             <span style={{fontSize:11, color:T.dim}}>v2: PSxG 골키퍼 보정 · 빅찬스 스큐 · 원정 피로도 반영</span>
           </div>
+          </CollapsibleSection>
 
+          <CollapsibleSection title="🔬 심화 분석 패널 (레이더·최근폼·라인업·심판 성향 등)">
           {/* ── 신규: 전력 레이더 차트 ── */}
           <ErrorBoundary>
             <RadarPanel home={home} away={away}/>
@@ -6557,7 +6580,9 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
               <LiveStandingPanel home={home} away={away}/>
             </ErrorBoundary>
           )}
+          </CollapsibleSection>
 
+          <CollapsibleSection title="💰 가치베팅 · 예측근거 · 컨디션 보정">
           {/* ── Value Bet (EV) 카드 ── */}
           {result.liveApplied && result.marketProbs && (() => {
             const mp = result.marketProbs;
@@ -6668,6 +6693,7 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
               })}
             </Card>
           )}
+          </CollapsibleSection>
 
           <Card style={{marginTop:12}}>
             <SectionTitle>💾 예측 저장 &amp; 결과 추적</SectionTitle>
@@ -6771,6 +6797,7 @@ function ScheduleTab({onSelectMatch, liveResults, onResultFetched}) {
   const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const [fetchingKey, setFetchingKey] = useState(null);
   const [manualScores, setManualScores] = useState({});
+  const [showPast, setShowPast] = useState(false);
 
   const byDate = useMemo(() => {
     const m = {};
@@ -6781,10 +6808,18 @@ function ScheduleTab({onSelectMatch, liveResults, onResultFetched}) {
     }
     const entries = Object.entries(m).filter(([date]) => date && date !== "undefined");
     return entries.sort((a,b)=> a[0]<b[0]?-1:1);
-  }, []);
+  }, [SCHEDULE.length]);
 
   const isPast = (date) => date < today;
   const isToday = (date) => date === today;
+
+  // 다가오는 경기를 최상단에 항상 표시, 종료된 경기는 접어서 하단에 기본 숨김
+  const upcomingDates = byDate.filter(([date]) => !isPast(date));
+  const pastDates = byDate.filter(([date]) => isPast(date)).slice().reverse();
+  // 원하는 달만 골라서 보기 (예: 12월 경기만 보고 예측하고 싶을 때)
+  const months = [...new Set(byDate.map(([date]) => date.slice(0,7)))].sort();
+  const [selectedMonth, setSelectedMonth] = useState(null);
+  const monthDates = selectedMonth ? byDate.filter(([date]) => date.startsWith(selectedMonth)) : null;
 
   const handleAutoFetch = async (g) => {
     const key = resultKey(g.home, g.away);
@@ -6832,10 +6867,63 @@ function ScheduleTab({onSelectMatch, liveResults, onResultFetched}) {
           📅 남은 일정 캘린더로 내보내기 (.ics)
         </button>
       </Card>
-      {byDate.map(([date, games]) => {
-        const past = isPast(date), todayFlag = isToday(date);
-        return (
-          <Card key={date} style={{marginTop:10}}>
+      {months.length > 1 && (
+        <div style={{display:"flex", gap:6, overflowX:"auto", padding:"10px 2px 2px", marginTop:10}}>
+          <button onClick={() => setSelectedMonth(null)}
+            style={{flexShrink:0, padding:"6px 13px", borderRadius:20, border:`1px solid ${!selectedMonth?T.accent:T.border}`,
+                    background: !selectedMonth?T.accent:T.surface, color: !selectedMonth?"#fff":T.muted,
+                    fontSize:12, fontWeight:700, cursor:"pointer"}}>
+            전체
+          </button>
+          {months.map(m => {
+            const active = selectedMonth === m;
+            const label = `${m.slice(2,4)}.${m.slice(5,7)}`;
+            return (
+              <button key={m} onClick={() => setSelectedMonth(m)}
+                style={{flexShrink:0, padding:"6px 13px", borderRadius:20, border:`1px solid ${active?T.accent:T.border}`,
+                        background: active?T.accent:T.surface, color: active?"#fff":T.muted,
+                        fontSize:12, fontWeight:700, cursor:"pointer"}}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {selectedMonth ? (
+        monthDates.length === 0 ? (
+          <Card style={{marginTop:10, textAlign:"center"}}>
+            <div style={{fontSize:12.5, color:T.muted}}>해당 월 경기가 없습니다.</div>
+          </Card>
+        ) : monthDates.map(([date, games]) => renderDateGroup(date, games))
+      ) : (
+        <React.Fragment>
+          {upcomingDates.length === 0 && (
+            <Card style={{marginTop:10, textAlign:"center"}}>
+              <div style={{fontSize:12.5, color:T.muted}}>예정된 경기가 없습니다.</div>
+            </Card>
+          )}
+          {upcomingDates.map(([date, games]) => renderDateGroup(date, games))}
+          {pastDates.length > 0 && (
+            <div style={{marginTop:14}}>
+              <button onClick={() => setShowPast(s => !s)}
+                style={{width:"100%", padding:"10px 0", borderRadius:9, border:`1px solid ${T.border}`,
+                        background:T.surface, color:T.muted, fontSize:12.5, fontWeight:700, cursor:"pointer"}}>
+                {showPast
+                  ? "▲ 종료된 경기 숨기기"
+                  : `▼ 종료된 경기 보기 (${pastDates.reduce((n,[,g])=>n+g.length,0)}경기)`}
+              </button>
+              {showPast && pastDates.map(([date, games]) => renderDateGroup(date, games))}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+    </div>
+  );
+
+  function renderDateGroup(date, games) {
+    const past = isPast(date), todayFlag = isToday(date);
+    return (
+      <Card key={date} style={{marginTop:10}}>
             <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
               <span style={{fontSize:12.5, fontWeight:800, color: todayFlag?T.gold:past?T.muted:T.cyan}}>
                 📆 {date}
@@ -6964,10 +7052,8 @@ function ScheduleTab({onSelectMatch, liveResults, onResultFetched}) {
               );
             })}
           </Card>
-        );
-      })}
-    </div>
-  );
+    );
+  }
 }
 
 function PlayerChips({names, xi}) {

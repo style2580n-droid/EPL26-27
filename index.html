@@ -8837,6 +8837,7 @@ async function loadPipelineData() {
       "\nreturn {PIPELINE_ELO, PIPELINE_ADVANCED_STATS, PIPELINE_RECENT_FORM, " +
       "PIPELINE_SQUADS, PIPELINE_STATIC_LEADERBOARD, PIPELINE_LIVE_RESULTS, " +
       "PIPELINE_TRANSFERS, PIPELINE_SCHEDULE, PIPELINE_H2H, " +
+      "PIPELINE_TEAM_GROUP_GAMES: (typeof PIPELINE_TEAM_GROUP_GAMES!=='undefined'?PIPELINE_TEAM_GROUP_GAMES:null), " +
       "PIPELINE_PLAYER_BASELINE: (typeof PIPELINE_PLAYER_BASELINE!=='undefined'?PIPELINE_PLAYER_BASELINE:null)};");
     const d = extract();
 
@@ -8872,6 +8873,19 @@ async function loadPipelineData() {
         });
         SQUADS[team] = merged;
       });
+    }
+    // 2026-07-26 추가: TEAM_GROUP_GAMES(개인기여도 playerImpactPct의 소스)가
+    // 여태 빈 객체로 하드코딩돼 있어서 죽어있던 기능. app_export.py가
+    // *_metrics.json(경기별 실측 스탯)에서 재구성해 보내주는 걸 그대로 병합.
+    if (d.PIPELINE_TEAM_GROUP_GAMES) {
+      Object.entries(d.PIPELINE_TEAM_GROUP_GAMES).forEach(([team, gamesByLabel]) => {
+        TEAM_GROUP_GAMES[team] = { ...(TEAM_GROUP_GAMES[team] || {}), ...gamesByLabel };
+      });
+      // 팀 기여도 캐시(getTeamShares)가 이전 계산(빈 데이터 기준)을 들고 있을
+      // 수 있어서, 새 경기 데이터가 들어온 이상 반드시 비워야 함.
+      if (typeof __teamShareCache !== "undefined") {
+        Object.keys(__teamShareCache).forEach(k => delete __teamShareCache[k]);
+      }
     }
     if (d.PIPELINE_STATIC_LEADERBOARD) {
       const lb = d.PIPELINE_STATIC_LEADERBOARD;

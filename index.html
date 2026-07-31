@@ -2005,8 +2005,64 @@ async function fetchApiFootballPrediction(home, away, dateISO) {
   });
 }
 
+// ============================================================ BSD 배당 (2026-07-31 추가, 1순위)
+// 공식 OpenAPI 스펙(football-schema.json, 사용자가 BSD 공식 사이트에서 직접 받아온
+// 것)으로 필드명 확인됨 — 추측 아님. /api/v2/odds/는 (event, bookmaker, market,
+// outcome) 튜플의 최신 관측치를 준다. outcome이 팀명이 아니라 HOME/DRAW/AWAY
+// 코드라서, odds-api.io/the-odds-api처럼 팀명 fuzzy 매칭이 실패할 걱정이 아예 없다
+// — SCHEDULE의 g.id가 이 경기의 BSD event_id 그대로라(같은 BSD 이벤트 객체에서
+// 나온 값), 매칭 자체가 애매할 수가 없는 구조.
+// ⚠️ BSD 공식 페이지에 "배당 기능 자체를 없앨지 고민 중"이라는 경고가 떠있었음
+// (2026-07-31 확인) — 언제 사라질 수 있는 소스라는 점 감안, 실패해도 기존
+// odds-api.io/the-odds-api 체인으로 자연스럽게 폴백되도록 설계.
+function findScheduleEventId(home, away) {
+  const g = (SCHEDULE || []).find(m =>
+    (isSameTeam(home, m.home) && isSameTeam(away, m.away)) ||
+    (isSameTeam(home, m.away) && isSameTeam(away, m.home)));
+  if (!g || g.id == null) return null;
+  return { id: g.id, swapped: !isSameTeam(home, g.home) };
+}
+
+async function fetchBsdBookmakerOdds(eventId) {
+  if (!RUNTIME_CONFIG.bsdToken || eventId == null) return [];
+  try {
+    const url = `https://sports.bzzoiro.com/api/v2/odds/?event_id=${eventId}&market=1x2&limit=200`;
+    const res = await fetchViaProxies(url, { headers: { "Authorization": `Token ${RUNTIME_CONFIG.bsdToken}` } }, 8000);
+    const j = res ? await res.json().catch(() => null) : null;
+    const rows = Array.isArray(j) ? j : (Array.isArray(j?.results) ? j.results : null);
+    if (!Array.isArray(rows) || !rows.length) return [];
+    const byBookmaker = {};
+    for (const r of rows) {
+      if (r.market !== "1x2") continue;
+      const slug = r.bookmaker_slug;
+      if (!slug || slug === "consensus") continue;  // consensus는 스펙상 "합성 평균"이지 실제 북메이커가 아님
+      if (!byBookmaker[slug]) byBookmaker[slug] = { bookmaker: r.bookmaker_name || slug };
+      if (r.outcome === "HOME") byBookmaker[slug].home = r.decimal_odds;
+      else if (r.outcome === "DRAW") byBookmaker[slug].draw = r.decimal_odds;
+      else if (r.outcome === "AWAY") byBookmaker[slug].away = r.decimal_odds;
+    }
+    return Object.values(byBookmaker).filter(b => b.home != null && b.draw != null && b.away != null);
+  } catch (e) {
+    return [];
+  }
+}
+
 async function fetchMatchOdds(home, away) {
   if (!RUNTIME_CONFIG.useLiveOdds) return null;
+
+  const sched = findScheduleEventId(home, away);
+  if (sched) {
+    const bsdRows = await fetchBsdBookmakerOdds(sched.id).catch(() => []);
+    if (bsdRows.length) {
+      const best = bsdRows.find(b => true) || bsdRows[0];
+      return {
+        home: sched.swapped ? best.away : best.home,
+        draw: best.draw,
+        away: sched.swapped ? best.home : best.away,
+        source: `BSD(${best.bookmaker})`,
+      };
+    }
+  }
 
   let h2hResult = null;        // {home, draw, away, source}
   let eventMeta = {};
@@ -5539,6 +5595,20 @@ function extractAllBookmakersFromTheOddsApi(ev) {
 
 async function fetchBookmakerComparison(home, away) {
   const results = [];
+
+  // 2026-07-31 추가: BSD 1순위(팀명매칭 불필요, fetchMatchOdds와 동일 원칙)
+  const sched = findScheduleEventId(home, away);
+  if (sched) {
+    try {
+      const bsdRows = await fetchBsdBookmakerOdds(sched.id);
+      for (const r of bsdRows) {
+        results.push(sched.swapped
+          ? { bookmaker: `BSD·${r.bookmaker}`, home: r.away, draw: r.draw, away: r.home }
+          : { bookmaker: `BSD·${r.bookmaker}`, home: r.home, draw: r.draw, away: r.away });
+      }
+    } catch (e) { /* 다음 소스로 */ }
+  }
+
   if (RUNTIME_CONFIG.oddsApiIoKey) {
     try {
       const evUrl = `https://api.odds-api.io/v3/events?apiKey=${RUNTIME_CONFIG.oddsApiIoKey}&sport=football&status=pending`;

@@ -2549,7 +2549,17 @@ async function runDiagnostics(sampleHome = "대한민국", sampleAway = "체코"
       const url = `https://v3.football.api-sports.io/status`;
       const res = await fetchViaProxies(url, { headers: { "x-apisports-key": RUNTIME_CONFIG.apiFootballKey } }, 8000);
       const j = res ? await res.json().catch(()=>null) : null;
-      if (j?.response) {
+      // 2026-07-31 수정: API-FOOTBALL은 계정정지/쿼터초과 등이어도 HTTP 200을 주면서
+      // response는 빈 배열([])로 온다 — []는 JS에서 truthy라서 기존 `if (j?.response)`가
+      // 이걸 "성공"으로 오판했다(실측 확인: 계정정지 상태에서 "연결 성공. 사용량 ?/?회"로
+      // 잘못 표시됨 — ?는 빈 배열에 .requests가 없어서 undefined가 찍힌 것). errors
+      // 필드를 먼저 확인해서 진짜 실패를 놓치지 않게 수정.
+      const afErrors = j?.errors;
+      const hasAfErrors = afErrors && (Array.isArray(afErrors) ? afErrors.length > 0 : Object.keys(afErrors).length > 0);
+      if (hasAfErrors) {
+        steps.push({ step: "API-Football (부상/라인업/득점왕 보조)", ok: false,
+          detail: `오류(계정정지/쿼터초과 등): ${JSON.stringify(afErrors).slice(0,150)}` });
+      } else if (j?.response?.requests) {
         const acc = j.response.requests;
         steps.push({ step: "API-Football (부상/라인업/득점왕 보조)", ok: true,
           detail: `연결 성공. 오늘 사용량 ${acc?.current ?? "?"}/${acc?.limit_day ?? "?"}회` });

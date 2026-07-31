@@ -2499,8 +2499,12 @@ async function runDiagnostics(sampleHome = "대한민국", sampleAway = "체코"
   await sleep(400);
 
   try {
+    // 2026-07-31 수정: 이 파일 안 ESPN 호출 5곳이 전부 "fifa.world"(월드컵)로
+    // 돼있었다 — EPL 앱인데 월드컵 데이터를 가져오고 있었던 것(실측 확인: 코드
+    // 자체가 이렇게 박혀있었음). EPL은 "eng.1"이 맞는 슬러그(공식문서 없는 비공식
+    // API라 100% 보장은 못 하지만 커뮤니티 검증 자료 기준). 5곳 전부 동일하게 수정.
     const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, "");
-    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${dateStr}`;
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=${dateStr}`;
     const res = await fetchViaProxies(url, {}, 8000);
     const j = res ? await res.json().catch(()=>null) : null;
     const events = j?.events;
@@ -3947,35 +3951,84 @@ async function loadApiFootballInjuries() {
 async function saveApiFootballInjuries(data) {
   try { await window.storage.set("wc:afInjuries", JSON.stringify(data), false); } catch (e) {}
 }
-async function fetchApiFootballInjuries(force = false) {
-  if (!RUNTIME_CONFIG.apiFootballKey) return null;
-  const data = await loadApiFootballInjuries();
-  const COOLDOWN_MS = 6 * 3600 * 1000; // 6시간
-  if (!force && data.lastFetch && (Date.now() - data.lastFetch) < COOLDOWN_MS) return data;
 
+// 2026-07-31 추가: ESPN 리그 전체 부상자(비공식 API, eng.1=EPL 슬러그). API-Football이
+// 지금 계정정지라 fetchApiFootballInjuries가 사실상 죽어있는 동안의 대체 소스로 씀.
+// 팀별로 안 나눠도 리그 전체를 한 번의 호출로 준다. 응답 스키마는 공식문서가 없어서
+// 여러 필드 경로를 방어적으로 시도 — 첫 실행 로그로 실제 필드명 확인 필요.
+async function fetchEspnInjuries() {
   try {
-    const headers = { "x-apisports-key": RUNTIME_CONFIG.apiFootballKey };
-    const res = await fetchViaProxies(`https://v3.football.api-sports.io/injuries?league=1&season=2026`, { headers }, 8000);
-    const j = res ? await res.json().catch(()=>null) : null;
-    if (Array.isArray(j?.response)) {
-      const byTeam = {};
-      for (const entry of j.response) {
-        const teamName = espnTeamToKorean(entry.team?.name || "");
-        const name = entry.player?.name;
-        const type = entry.player?.type || entry.type || "Injury";
-        const reason = entry.player?.reason || entry.reason || "";
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/injuries`;
+    const res = await fetchViaProxies(url, {}, 8000);
+    const j = res ? await res.json().catch(() => null) : null;
+    const teams = j?.injuries;
+    if (!Array.isArray(teams) || !teams.length) return null;
+    const byTeam = {};
+    for (const t of teams) {
+      const teamName = espnTeamToKorean(t.displayName || t.team?.displayName || t.team?.name || "");
+      for (const entry of (t.injuries || [])) {
+        const name = entry.athlete?.displayName || entry.athlete?.name;
         if (!name) continue;
+        const type = entry.status || entry.type || "Injury";
+        const reason = entry.details?.type || entry.details?.detail || entry.longComment || entry.shortComment || "";
         if (!byTeam[teamName]) byTeam[teamName] = [];
-        if (!byTeam[teamName].some(p => p.name === name && p.reason === reason)) {
+        if (!byTeam[teamName].some(p => p.name === name)) {
           byTeam[teamName].push({ name, type, reason });
         }
       }
-      data.byTeam = byTeam;
-      data.lastFetch = Date.now();
-      await saveApiFootballInjuries(data);
     }
-  } catch (e) { /* 실패 시 기존 캐시 유지 */ }
-  return data;
+    return { byTeam, lastFetch: Date.now(), source: "ESPN" };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchApiFootballInjuries(force = false) {
+  const cached = await loadApiFootballInjuries();
+  const COOLDOWN_MS = 6 * 3600 * 1000; // 6시간
+  if (!force && cached.lastFetch && (Date.now() - cached.lastFetch) < COOLDOWN_MS) return cached;
+
+  if (RUNTIME_CONFIG.apiFootballKey) {
+    try {
+      const headers = { "x-apisports-key": RUNTIME_CONFIG.apiFootballKey };
+      // ⚠️ league=1은 API-Football 기준 EPL이 아니라 월드컵이다(2-1 작업 중 실측
+      // 확인된 기존 버그, 이번 수정 범위 밖 — 정확한 EPL league_id를 숫자로
+      // 추측하지 않는다는 원칙상 임의로 안 바꿈. API-Football 계정 복구되면
+      // collect_api_football_player_stats.py가 실측 확인한 값으로 바로잡을 것).
+      const res = await fetchViaProxies(`https://v3.football.api-sports.io/injuries?league=1&season=2026`, { headers }, 8000);
+      const j = res ? await res.json().catch(()=>null) : null;
+      // 2026-07-31 수정: 계정정지 등이어도 API-Football은 HTTP 200 + response
+      // 빈 배열을 주는데, 기존 코드는 이걸 "성공, 부상자 0명"으로 오판했다(진단화면
+      // 버그와 동일 패턴). errors 필드를 먼저 확인해서 진짜 실패를 놓치지 않게.
+      const afErrors = j?.errors;
+      const hasAfErrors = afErrors && (Array.isArray(afErrors) ? afErrors.length > 0 : Object.keys(afErrors).length > 0);
+      if (!hasAfErrors && Array.isArray(j?.response) && j.response.length) {
+        const byTeam = {};
+        for (const entry of j.response) {
+          const teamName = espnTeamToKorean(entry.team?.name || "");
+          const name = entry.player?.name;
+          const type = entry.player?.type || entry.type || "Injury";
+          const reason = entry.player?.reason || entry.reason || "";
+          if (!name) continue;
+          if (!byTeam[teamName]) byTeam[teamName] = [];
+          if (!byTeam[teamName].some(p => p.name === name && p.reason === reason)) {
+            byTeam[teamName].push({ name, type, reason });
+          }
+        }
+        const data = { byTeam, lastFetch: Date.now(), source: "API-Football" };
+        await saveApiFootballInjuries(data);
+        return data;
+      }
+    } catch (e) { /* ESPN 폴백으로 */ }
+  }
+
+  // API-Football 키 없음/실패/errors → ESPN으로 폴백
+  const espnData = await fetchEspnInjuries();
+  if (espnData) {
+    await saveApiFootballInjuries(espnData);
+    return espnData;
+  }
+  return cached; // 둘 다 실패하면 기존 캐시 유지(완전 공백보다 낫다)
 }
 
 async function updateLeaderboards(maxDates = 4) {
@@ -4001,7 +4054,7 @@ async function updateLeaderboards(maxDates = 4) {
     const fmt = dt => dt.toISOString().slice(0,10).replace(/-/g,"");
     const rangeStr = `${fmt(dPrev)}-${fmt(dNext)}`;
     try {
-      const sbRes = await fetchViaProxies(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${rangeStr}&limit=50`, {}, 8000);
+      const sbRes = await fetchViaProxies(`https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=${rangeStr}&limit=50`, {}, 8000);
       const sb = sbRes ? await sbRes.json().catch(()=>null) : null;
       const events = sb?.events || [];
       let pendingThisDate = 0;
@@ -4021,7 +4074,7 @@ async function updateLeaderboards(maxDates = 4) {
           continue;
         }
 
-        const sumRes = await fetchViaProxies(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${ev.id}`, {}, 8000);
+        const sumRes = await fetchViaProxies(`https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/summary?event=${ev.id}`, {}, 8000);
         const sum = sumRes ? await sumRes.json().catch(()=>null) : null;
         if (!sum) { continue; }
 
@@ -4104,7 +4157,7 @@ async function fetchEspnLineup(home, away, dateISO) {
     const dNext = new Date(d0); dNext.setUTCDate(d0.getUTCDate() + 1);
     const fmt = dt => `${dt.getUTCFullYear()}${String(dt.getUTCMonth()+1).padStart(2,"0")}${String(dt.getUTCDate()).padStart(2,"0")}`;
     const rangeStr = `${fmt(dPrev)}-${fmt(dNext)}`;
-    const sbUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${rangeStr}&limit=50`;
+    const sbUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=${rangeStr}&limit=50`;
     const sbRes = await fetchViaProxies(sbUrl, {}, 8000);
     if (!sbRes) return null;
     const sb = await sbRes.json().catch(()=>null);
@@ -4123,7 +4176,7 @@ async function fetchEspnLineup(home, away, dateISO) {
     }
     if (!eventId) return null;
 
-    const sumUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${eventId}`;
+    const sumUrl = `https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/summary?event=${eventId}`;
     const sumRes = await fetchViaProxies(sumUrl, {}, 8000);
     if (!sumRes) return null;
     const sum = await sumRes.json().catch(()=>null);
@@ -7123,7 +7176,10 @@ function ApiFootballInjuriesPanel({team}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { loadApiFootballInjuries().then(setData); }, []);
+  // 2026-07-31 수정: 예전엔 캐시만 불러오고 새로고침을 눌러야 실제로 조회됐는데,
+  // ESPN 폴백이 생기면서(키 불필요) 마운트 시 바로 자동조회하도록 바꿈 —
+  // fetchApiFootballInjuries 내부에 6시간 쿨다운이 있어서 과호출 걱정 없음.
+  useEffect(() => { fetchApiFootballInjuries(false).then(setData); }, []);
 
   const refresh = async () => {
     setLoading(true);
@@ -7133,14 +7189,16 @@ function ApiFootballInjuriesPanel({team}) {
     } finally { setLoading(false); }
   };
 
-  if (!RUNTIME_CONFIG.apiFootballKey) return null;
+  // 2026-07-31 수정: API-Football 키가 없어도 ESPN 폴백으로 동작하니 더 이상
+  // 패널 자체를 숨기지 않는다(예전엔 `!RUNTIME_CONFIG.apiFootballKey`면 null 반환).
   const list = data?.byTeam?.[team] || [];
   const lastFetch = data?.lastFetch ? new Date(data.lastFetch) : null;
+  const sourceLabel = data?.source || "부상/결장";
 
   return (
     <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${T.border}`}}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
-        <span style={{fontSize:12, fontWeight:700, color:T.text}}>🚑 API-Football 부상/결장 (자동)</span>
+        <span style={{fontSize:12, fontWeight:700, color:T.text}}>🚑 {sourceLabel} 부상/결장 (자동)</span>
         <button onClick={refresh} disabled={loading}
           style={{padding:"5px 10px", borderRadius:7, border:"none", background:T.cyan, color:"#001018",
             fontWeight:700, fontSize:11, cursor: loading ? "default" : "pointer", opacity: loading ? 0.7 : 1}}>

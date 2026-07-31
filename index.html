@@ -1582,9 +1582,9 @@ async function crossValidate(homeName, awayName, ourProbs, dateISO = null) {
 const RUNTIME_CONFIG = {
   corsProxy: "https://corsproxy.io/?url=",
 
-  oddsApiIoKey: "afb988f21e224372190ac852df6d2430c86be07b7a3bd8088f2a42950b648db0",
+  oddsApiIoKey: "15f21084ebc711d691cdc3e9d1b20943c8ff66bccdf563609f8c872c2b7a320a",
 
-  oddsApiKey: "ac3af02827ba330fa5732bb1b7c64b98",
+  oddsApiKey: "975c520ef6d6bcb08c22607596bf8022",
 
   weatherApiKey: "8fefd28872b799fd235665efaa592653",
 
@@ -2043,8 +2043,8 @@ async function fetchMatchOdds(home, away) {
 
   let mainTotals = null;
   let totalsSource = null;
-    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
-  if (false && RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-31: the-odds-api.com 공식문서 재확인 결과 "모든 플랜이 모든 스포츠 접근 가능"(무료 포함, 축구 제외 언급 없음) — 07-15의 "무료는 축구 미지원" 판단은 근거 재확인 결과 틀렸을 가능성 높음. 새 유료키로 다시 활성화, 실배포 후 실제 응답으로 재검증할 것
+  if (RUNTIME_CONFIG.oddsApiKey) {
     try {
       const oddsUrl = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h,totals&oddsFormat=decimal`;
       const res = await fetchViaProxies(oddsUrl, {}, 8000);
@@ -2341,8 +2341,8 @@ async function runDiagnostics(sampleHome = "대한민국", sampleAway = "체코"
 
   await sleep(600);
 
-    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
-  if (false && RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-31: the-odds-api.com 공식문서 재확인 결과 "모든 플랜이 모든 스포츠 접근 가능"(무료 포함, 축구 제외 언급 없음) — 07-15의 "무료는 축구 미지원" 판단은 근거 재확인 결과 틀렸을 가능성 높음. 새 유료키로 다시 활성화, 실배포 후 실제 응답으로 재검증할 것
+  if (RUNTIME_CONFIG.oddsApiKey) {
     try {
       const url = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h,totals&oddsFormat=decimal`;
       let j = null, detail = "";
@@ -5499,8 +5499,8 @@ async function fetchBookmakerComparison(home, away) {
       }
     } catch (e) { /* 다음 소스로 */ }
   }
-    // 2026-07-15: the-odds-api.com 무료 티어는 축구 미지원(NBA/MLB만) — 유료 전환 전까지 비활성화. 되돌리려면 'false && ' 삭제
-  if (false && RUNTIME_CONFIG.oddsApiKey) {
+    // 2026-07-31: the-odds-api.com 공식문서 재확인 결과 "모든 플랜이 모든 스포츠 접근 가능"(무료 포함, 축구 제외 언급 없음) — 07-15의 "무료는 축구 미지원" 판단은 근거 재확인 결과 틀렸을 가능성 높음. 새 유료키로 다시 활성화, 실배포 후 실제 응답으로 재검증할 것
+  if (RUNTIME_CONFIG.oddsApiKey) {
     try {
       const oddsUrl = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey=${RUNTIME_CONFIG.oddsApiKey}&regions=eu&markets=h2h&oddsFormat=decimal`;
       const res = await fetchViaProxies(oddsUrl, {}, 8000);

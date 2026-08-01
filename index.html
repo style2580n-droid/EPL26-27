@@ -7766,7 +7766,15 @@ function LeaderboardView() {
     ]},
     etc:     { label:"📋 기타", metrics:[
       {id:"cards",label:"경고/퇴장",src:"cards"},
-      {id:"ownGoals",label:"자책골",src:"ownGoals",unit:"회"},
+      {id:"ownGoals",label:"자책골",src:"ownGoals"},
+      // 2026-08-01 추가: goalscorers.json의 goal_type/body(실측 확인된 필드)
+      // 기반 세트피스 리더보드. src:"leaderboard"는 STATIC_LEADERBOARD의
+      // 해당 키를 scorers/assists와 동일한 단순 {key:숫자} 구조로 그대로 씀.
+      {id:"headerGoals",label:"헤더골",src:"leaderboard",lbKey:"headerGoals",unit:"골"},
+      {id:"penaltyGoals",label:"페널티골",src:"leaderboard",lbKey:"penaltyGoals",unit:"골"},
+      {id:"freeKickGoals",label:"프리킥골",src:"leaderboard",lbKey:"freeKickGoals",unit:"골"},
+      {id:"appearances",label:"출전경기",src:"leaderboard",lbKey:"appearances",unit:"경기"},
+      {id:"minutesPlayed",label:"출전시간",src:"leaderboard",lbKey:"minutesPlayed",unit:"분"},
     ]},
   };
 
@@ -7827,6 +7835,13 @@ function LeaderboardView() {
     if (m.src === "ownGoals") {
       return Object.entries(STATIC_LEADERBOARD.ownGoals).map(([k,v])=>{ const [name,team]=k.split("|");
         return {name,team,val:v,disp:`${v}${m.unit}`}; })
+        .sort((a,b)=>b.val-a.val).slice(0,LIMIT);
+    }
+    // 2026-08-01 추가: 헤더골/페널티골/프리킥골/출전경기/출전시간 —
+    // scorers/assists와 동일하게 단순 {key:숫자} 구조를 그대로 순위화.
+    if (m.src === "leaderboard") {
+      const src = STATIC_LEADERBOARD[m.lbKey] || {};
+      return Object.entries(src).map(([k,v])=>{ const [name,team]=k.split("|"); return {name,team,val:v,disp:`${v}${m.unit||""}`}; })
         .sort((a,b)=>b.val-a.val).slice(0,LIMIT);
     }
     // 세부 스탯(SQUADS games 기반)

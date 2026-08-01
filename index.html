@@ -7277,6 +7277,17 @@ function ApiFootballInjuriesPanel({team}) {
   const lastFetch = data?.lastFetch ? new Date(data.lastFetch) : null;
   const sourceLabel = data?.source || "부상/결장";
 
+  // 2026-08-01 추가: compute_card_suspensions.py가 만든 카드 결장위험 정보.
+  // 레드카드(직전경기)는 "결장 확정"급으로, 옐로누적(5장+)은 "정지 위험"
+  // 경고로 구분해서 보여준다(정확한 리그별 정지규정은 다를 수 있어서
+  // 옐로누적은 확정 아닌 경고 톤 유지 — compute_card_suspensions.py
+  // docstring에 명시된 원칙 그대로).
+  const cardList = Object.entries(
+    (typeof PIPELINE_CARD_SUSPENSIONS !== "undefined" && PIPELINE_CARD_SUSPENSIONS) || {}
+  )
+    .filter(([, info]) => info.team === team)
+    .map(([name, info]) => ({ name, ...info }));
+
   return (
     <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${T.border}`}}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
@@ -7287,6 +7298,20 @@ function ApiFootballInjuriesPanel({team}) {
           {loading ? "⏳ 갱신 중..." : "🔄 갱신"}
         </button>
       </div>
+      {cardList.length > 0 && (
+        <div style={{display:"flex", flexDirection:"column", gap:4, marginBottom: list.length > 0 ? 8 : 0}}>
+          {cardList.map((p, i) => (
+            <div key={`card-${i}`} style={{fontSize:12, color: p.red_on_last_match ? T.red : T.gold}}>
+              🟨 {p.name}{" "}
+              <span style={{color:T.muted}}>
+                — {p.red_on_last_match
+                  ? "직전 경기 퇴장 (다음 경기 결장 확정)"
+                  : `옐로카드 누적 ${p.yellow_total}장 (정지 위험)`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {list.length > 0 ? (
         <div style={{display:"flex", flexDirection:"column", gap:4}}>
           {list.map((p, i) => (

@@ -5552,6 +5552,21 @@ function getTeamRadarProfile(team) {
     const range = max - min;
     for (const t of teams) norm[t][ax] = range > 1e-9 ? ((raw[t][ax]-min)/range)*100 : 50;
   }
+  // 2026-08-01 추가: 프리시즌 친선전 상대팀처럼 ELO 데이터 자체가 없는 팀은
+  // teams(getAllTeamsList = Object.keys(ELO)) 목록에 없어서 raw[team]/
+  // norm[team]이 undefined가 되고, 그걸 그대로 리턴하면 이후 화면 렌더링이
+  // "Cannot read properties of undefined" 에러로 죽었다(실측 확인됨) —
+  // 데이터 없는 팀은 모든 축을 중립값(50 / raw는 리그 평균 근사치)으로
+  // 안전하게 채워서 반환한다.
+  if (!raw[team] || !norm[team]) {
+    const neutralNorm = {};
+    for (const ax of RADAR_AXES) neutralNorm[ax] = 50;
+    return {
+      raw: { 공격: 1.35, 수비: -1.35, 압박강도: -12, "점유(필드틸트)": 50, 세트피스: 0.30, 최근폼: 1500 },
+      norm: neutralNorm,
+      noData: true,
+    };
+  }
   return { raw: raw[team], norm: norm[team] };
 }
 

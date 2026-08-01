@@ -6415,7 +6415,11 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
       </Card>
 
       {home !== away && <H2HCard teamA={home} teamB={away} />}
-      {home !== away && <TeamStyleRadarCard home={home} away={away} />}
+      {home !== away && (
+        <ErrorBoundary>
+          <TeamStyleRadarCard home={home} away={away} />
+        </ErrorBoundary>
+      )}
 
       {result && (
         <>

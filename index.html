@@ -5429,12 +5429,26 @@ function ProbBar({home, draw, away, homeLabel, awayLabel}) {
 }
 function GroupedTeamSelect({value, onChange, label, exclude}) {
   const groupOrder = Object.keys(GROUPS).sort();
+  // 2026-08-02 추가: value(현재 선택된 팀)가 GROUPS 어디에도 없으면(챔스/
+  // 유로파/리그간 친선전 상대처럼 EPL 20팀 밖의 트래킹 팀) select가 빈
+  // 상태로 보이던 문제 — onSelectMatch 자체는 가드 없이 그대로 설정되니
+  // (App.js 확인됨) 값은 맞는데 드롭다운에 표시가 안 됐다. 없는 값이면
+  // 별도 옵션으로 하나 추가해서 정상 표시되게 한다. 백엔드에서 이제
+  // 크로스리그 팀 ELO도 채워서 보내니(app_export.py 수정) 예측 계산
+  // 자체는 이미 정상 동작한다.
+  const allListed = new Set(groupOrder.flatMap(g => GROUPS[g]));
+  const extra = (value && value !== exclude && !allListed.has(value)) ? value : null;
   return (
     <div style={{flex:1, minWidth:0}}>
       <div style={{fontSize:11.5, color:T.muted, marginBottom:5}}>{label}</div>
       <select value={value} onChange={e=>onChange(e.target.value)}
         style={{width:"100%", padding:"10px 8px", borderRadius:9, background:T.surface, color:T.text,
                 border:`1px solid ${T.border}`, fontSize:13.5}}>
+        {extra && (
+          <optgroup label="크로스리그 상대">
+            <option value={extra}>{flag(extra)} {extra}</option>
+          </optgroup>
+        )}
         {groupOrder.map(g => (
           <optgroup key={g} label={g==="PO" ? "예선/플레이오프" : `${g}조`}>
             {GROUPS[g].filter(t => t !== exclude).map(t =>

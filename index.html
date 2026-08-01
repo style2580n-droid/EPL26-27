@@ -5043,6 +5043,84 @@ function AdvancedStatsPanel({home, away}) {
   );
 }
 
+// 2026-08-02 신규: 헤더골/페널티골/프리킥골/자책골/경고/퇴장 — 예전엔
+// "⚽ 시즌 기록" 탭의 20인 전역 랭킹(기타 그룹)이었는데, "득점/도움/선방처럼
+// 실제 시상 있는 것만 랭킹으로 남기고 나머지는 지금 보는 두 팀끼리
+// 비교하게 해달라"는 피드백 반영. STATIC_LEADERBOARD는 선수 단위
+// ({"이름|팀": 값})라 팀 합계를 여기서 직접 구한다.
+function getEplTeamStatTotal(lbKey, team) {
+  const src = STATIC_LEADERBOARD[lbKey] || {};
+  let sum = 0;
+  for (const key in src) {
+    const idx = key.lastIndexOf("|");
+    if (idx >= 0 && key.slice(idx + 1) === team) sum += (src[key] || 0);
+  }
+  return sum;
+}
+function getEplTeamCardTotals(team) {
+  const src = STATIC_LEADERBOARD.cards || {};
+  let yellow = 0, red = 0;
+  for (const key in src) {
+    const idx = key.lastIndexOf("|");
+    if (idx >= 0 && key.slice(idx + 1) === team) {
+      const v = src[key] || {};
+      yellow += v.yellow || 0;
+      red += v.red || 0;
+    }
+  }
+  return { yellow, red };
+}
+
+function SetPieceCardsCompareCard({home, away}) {
+  const ROWS = [
+    { lbKey: "headerGoals", label: "🎯 헤더골" },
+    { lbKey: "penaltyGoals", label: "🥅 페널티골" },
+    { lbKey: "freeKickGoals", label: "🎯 프리킥골" },
+    { lbKey: "ownGoals", label: "🙈 자책골", higherBetter: false },
+  ];
+  const data = ROWS.map(r => ({
+    ...r,
+    hVal: getEplTeamStatTotal(r.lbKey, home),
+    aVal: getEplTeamStatTotal(r.lbKey, away),
+  }));
+  const hCards = getEplTeamCardTotals(home), aCards = getEplTeamCardTotals(away);
+  const hasAny = data.some(r => r.hVal > 0 || r.aVal > 0) ||
+                 hCards.yellow || hCards.red || aCards.yellow || aCards.red;
+  if (!hasAny) return null;
+
+  const Row = ({label, hVal, aVal, higherBetter = true}) => {
+    const hGood = higherBetter ? hVal > aVal : (hVal < aVal && aVal > 0);
+    const aGood = higherBetter ? aVal > hVal : (aVal < hVal && hVal > 0);
+    return (
+      <div style={{display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:`1px solid ${T.border}`}}>
+        <span style={{flex:1, textAlign:"right", fontSize:13, fontWeight:700, color: hGood?T.green:T.text}}>{hVal}</span>
+        <span style={{width:110, textAlign:"center", fontSize:11, color:T.muted}}>{label}</span>
+        <span style={{flex:1, textAlign:"left", fontSize:13, fontWeight:700, color: aGood?T.green:T.text}}>{aVal}</span>
+      </div>
+    );
+  };
+  const hCardScore = hCards.yellow + hCards.red * 2, aCardScore = aCards.yellow + aCards.red * 2;
+
+  return (
+    <div style={{background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:14, marginTop:12}}>
+      <div style={{textAlign:"center", marginBottom:8}}>
+        <span style={{fontSize:12, color:T.muted}}>← <TeamCrest name={home}/> {home}</span>
+        <span style={{fontSize:13, fontWeight:700, color:T.text, margin:"0 10px"}}>📋 세트피스·카드 비교</span>
+        <span style={{fontSize:12, color:T.muted}}>{away} <TeamCrest name={away}/> →</span>
+      </div>
+      {data.map(r => <Row key={r.lbKey} {...r}/>)}
+      <div style={{display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderTop:`1px solid ${T.border}`, marginTop:4}}>
+        <span style={{flex:1, textAlign:"right", fontSize:13, fontWeight:700, color: hCardScore < aCardScore ? T.green : T.text}}>🟨{hCards.yellow} 🟥{hCards.red}</span>
+        <span style={{width:110, textAlign:"center", fontSize:11, color:T.muted}}>경고/퇴장</span>
+        <span style={{flex:1, textAlign:"left", fontSize:13, fontWeight:700, color: aCardScore < hCardScore ? T.green : T.text}}>🟨{aCards.yellow} 🟥{aCards.red}</span>
+      </div>
+      <div style={{fontSize:11, color:T.dim, marginTop:6, textAlign:"center"}}>
+        📐 이번 시즌 팀 스쿼드 누적치 비교(경기수 보정 없음) · 초록색 = 비교 우위(카드는 적을수록 우위)
+      </div>
+    </div>
+  );
+}
+
 function RefereePanel({home, away}) {
   const refName = getMatchReferee(home, away);
   const ref = refName ? REFEREE_STATS[refName] : null;
@@ -6774,6 +6852,11 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
             <AdvancedStatsPanel home={home} away={away}/>
           </ErrorBoundary>
 
+          {/* ── 2026-08-02 신규: 세트피스·카드 비교(구 "기타" 리더보드 이동분) ── */}
+          <ErrorBoundary>
+            <SetPieceCardsCompareCard home={home} away={away}/>
+          </ErrorBoundary>
+
           {/* ── v3 신규: 심판 성향 패널 ── */}
           <ErrorBoundary>
             <RefereePanel home={home} away={away}/>
@@ -7765,14 +7848,12 @@ function LeaderboardView() {
       {id:"psxgGA",label:"PSxG-GA",src:"stat",key:"psxgGA",unit:"",dec:2},
     ]},
     etc:     { label:"📋 기타", metrics:[
-      {id:"cards",label:"경고/퇴장",src:"cards"},
-      {id:"ownGoals",label:"자책골",src:"ownGoals"},
-      // 2026-08-01 추가: goalscorers.json의 goal_type/body(실측 확인된 필드)
-      // 기반 세트피스 리더보드. src:"leaderboard"는 STATIC_LEADERBOARD의
-      // 해당 키를 scorers/assists와 동일한 단순 {key:숫자} 구조로 그대로 씀.
-      {id:"headerGoals",label:"헤더골",src:"leaderboard",lbKey:"headerGoals",unit:"골"},
-      {id:"penaltyGoals",label:"페널티골",src:"leaderboard",lbKey:"penaltyGoals",unit:"골"},
-      {id:"freeKickGoals",label:"프리킥골",src:"leaderboard",lbKey:"freeKickGoals",unit:"골"},
+      // 2026-08-02 수정: 경고/퇴장·자책골·헤더골/페널티골/프리킥골은
+      // "20인 개인 랭킹"보다 "지금 보는 두 팀끼리 비교"가 자연스럽다는
+      // 피드백 반영 — 예측 화면의 SetPieceCardsCompareCard로 이동함.
+      // 출전경기/출전시간은 그대로 둠 — 팀 합계론 의미 없지만(스쿼드
+      // 인원 많은 팀이 그냥 유리), 1인 지표로는 스쿼드 내에서 누가
+      // 꾸준히 기회를 받는 선수인지(기회창출) 보여줘서 여전히 유효함.
       {id:"appearances",label:"출전경기",src:"leaderboard",lbKey:"appearances",unit:"경기"},
       {id:"minutesPlayed",label:"출전시간",src:"leaderboard",lbKey:"minutesPlayed",unit:"분"},
     ]},

@@ -5148,7 +5148,12 @@ const pct = x => (typeof x === "number" && !isNaN(x)) ? (x*100).toFixed(1)+"%" :
 
 function TeamCrest({name, size=16}) {
   const [err, setErr] = useState(false);
-  const url = (typeof CLUB_LOGOS !== "undefined") ? CLUB_LOGOS[name] : "";
+  // 2026-08-01 수정: CLUB_LOGOS(하드코딩, EPL 20개 팀 로컬 이미지)에 없으면
+  // PIPELINE_LOGOS_FRIENDLY(친선전 상대팀 원격 로고 URL, collect_logos_
+  // multileague.py가 TheSportsDB에서 채움)를 2순위로 시도한다 — 예전엔
+  // CLUB_LOGOS에 없는 팀(친선전 상대 등)은 무조건 텍스트 약어만 나왔었다.
+  const url = ((typeof CLUB_LOGOS !== "undefined") ? CLUB_LOGOS[name] : "")
+    || ((typeof PIPELINE_LOGOS_FRIENDLY !== "undefined" && PIPELINE_LOGOS_FRIENDLY) ? PIPELINE_LOGOS_FRIENDLY[name] : "");
   const abbr = (typeof CLUB_ABBR !== "undefined" && CLUB_ABBR[name]) ? CLUB_ABBR[name] : (name ? name.slice(0,3) : "");
   if (!url || err) {
     return (

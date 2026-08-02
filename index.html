@@ -161,6 +161,36 @@ const CLUB_LOGOS = {
   "입스위치 타운": "logos/ipswich.png",
 };
 
+// 2026-08-02 추가: 사용자가 직접 구해준 에레디비시 18개 클럽 로고(로컬
+// 파일, logos/eredivisie/ 폴더) — BSD 원격 소스에 없거나(404) 실패하는
+// 팀(FC 위트레흐트·FC 흐로닝언 등)의 최종 폴백. TeamCrest에서
+// CLUB_LOGOS → PIPELINE_LOGOS_FRIENDLY → 이 표 순으로 시도한다.
+// 2026-08-02 추가(2차): 처음에 빠졌던 FC 볼렌담·헤라클레스 알멜로·
+// NAC 브레다 3팀도 사용자가 마저 구해줘서 추가 — 이제 21개 전 팀 커버.
+const EREDIVISIE_LOGOS_LOCAL = {
+  "ADO 덴하흐": "logos/eredivisie/ado_den_haag.png",
+  "아약스": "logos/eredivisie/ajax.png",
+  "AZ 알크마르": "logos/eredivisie/az_alkmaar.png",
+  "엑셀시오르 로테르담": "logos/eredivisie/excelsior.png",
+  "FC 흐로닝언": "logos/eredivisie/fc_groningen.png",
+  "FC 트벤테": "logos/eredivisie/fc_twente.png",
+  "FC 위트레흐트": "logos/eredivisie/fc_utrecht.png",
+  "페예노르트": "logos/eredivisie/feyenoord.png",
+  "포르투나 시타르드": "logos/eredivisie/fortuna_sittard.png",
+  "호 어헤드 이글스": "logos/eredivisie/go_ahead_eagles.png",
+  "N.E.C. 네이메헌": "logos/eredivisie/nec_nijmegen.png",
+  "PEC 즈볼레": "logos/eredivisie/pec_zwolle.png",
+  "PSV 에인트호번": "logos/eredivisie/psv_eindhoven.png",
+  "SC 캄뷔르": "logos/eredivisie/sc_cambuur.png",
+  "sc 헤렌베인": "logos/eredivisie/sc_heerenveen.png",
+  "스파르타 로테르담": "logos/eredivisie/sparta_rotterdam.png",
+  "텔스타르": "logos/eredivisie/telstar.png",
+  "빌럼II": "logos/eredivisie/willem_ii.png",
+  "FC 볼렌담": "logos/eredivisie/fc_volendam.png",
+  "헤라클레스 알멜로": "logos/eredivisie/heracles_almelo.png",
+  "NAC 브레다": "logos/eredivisie/nac_breda.png",
+};
+
 // 2026-08-02 추가: 이 변수가 실제로 어디서도 선언/할당된 적이 없었다 —
 // TeamCrest(아래)는 typeof PIPELINE_LOGOS_FRIENDLY !== "undefined"로만
 // 체크하고 참조하는데, 애초에 선언 자체가 없으니 typeof가 항상
@@ -5241,7 +5271,8 @@ function TeamCrest({name, size=16}) {
   // multileague.py가 TheSportsDB에서 채움)를 2순위로 시도한다 — 예전엔
   // CLUB_LOGOS에 없는 팀(친선전 상대 등)은 무조건 텍스트 약어만 나왔었다.
   const baseUrl = ((typeof CLUB_LOGOS !== "undefined") ? CLUB_LOGOS[name] : "")
-    || ((typeof PIPELINE_LOGOS_FRIENDLY !== "undefined" && PIPELINE_LOGOS_FRIENDLY) ? PIPELINE_LOGOS_FRIENDLY[name] : "");
+    || ((typeof PIPELINE_LOGOS_FRIENDLY !== "undefined" && PIPELINE_LOGOS_FRIENDLY) ? PIPELINE_LOGOS_FRIENDLY[name] : "")
+    || ((typeof EREDIVISIE_LOGOS_LOCAL !== "undefined") ? EREDIVISIE_LOGOS_LOCAL[name] : "");
   const abbr = (typeof CLUB_ABBR !== "undefined" && CLUB_ABBR[name]) ? CLUB_ABBR[name] : (name ? name.slice(0,3) : "");
   // 2026-08-02 추가: 한 화면(일정 등)에 크레스트 이미지가 수십 개 동시에
   // 뜨다 보니, 이미지 자체는 멀쩡한데(URL 직접 열면 정상 로드 확인됨 —

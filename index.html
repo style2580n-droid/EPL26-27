@@ -160,6 +160,15 @@ const CLUB_LOGOS = {
   "헐 시티": "logos/hull_city.png",
   "입스위치 타운": "logos/ipswich.png",
 };
+
+// 2026-08-02 추가: 이 변수가 실제로 어디서도 선언/할당된 적이 없었다 —
+// TeamCrest(아래)는 typeof PIPELINE_LOGOS_FRIENDLY !== "undefined"로만
+// 체크하고 참조하는데, 애초에 선언 자체가 없으니 typeof가 항상
+// "undefined"로 나와서 친선전 상대팀 로고(collect_logos_multileague.py가
+// 채우는 '_friendly' 데이터)가 한 번도 화면에 뜬 적이 없었다(사용자
+// 스크린샷으로 실측 확인 — 아스날 외 전부 텍스트 약어만 표시). 아래
+// loadPipelineData()에서 PIPELINE_LOGOS_FRIENDLY를 채워 넣는다.
+let PIPELINE_LOGOS_FRIENDLY = {};
 const CLUB_ABBR = {
   "맨체스터 시티": "MCI",
   "아스날": "ARS",
@@ -9199,10 +9208,14 @@ async function loadPipelineData() {
       "\nreturn {PIPELINE_ELO, PIPELINE_ADVANCED_STATS, PIPELINE_RECENT_FORM, " +
       "PIPELINE_SQUADS, PIPELINE_STATIC_LEADERBOARD, PIPELINE_LIVE_RESULTS, " +
       "PIPELINE_TRANSFERS, PIPELINE_SCHEDULE, PIPELINE_H2H, " +
+      "PIPELINE_LOGOS_FRIENDLY: (typeof PIPELINE_LOGOS_FRIENDLY!=='undefined'?PIPELINE_LOGOS_FRIENDLY:null), " +
       "PIPELINE_TEAM_GROUP_GAMES: (typeof PIPELINE_TEAM_GROUP_GAMES!=='undefined'?PIPELINE_TEAM_GROUP_GAMES:null), " +
       "PIPELINE_PLAYER_BASELINE: (typeof PIPELINE_PLAYER_BASELINE!=='undefined'?PIPELINE_PLAYER_BASELINE:null)};");
     const d = extract();
 
+    if (d.PIPELINE_LOGOS_FRIENDLY) {
+      Object.assign(PIPELINE_LOGOS_FRIENDLY, d.PIPELINE_LOGOS_FRIENDLY);
+    }
     if (d.PIPELINE_ELO) {
       Object.entries(d.PIPELINE_ELO).forEach(([team, v]) => {
         ELO[team] = { ...ELO[team], ...v };

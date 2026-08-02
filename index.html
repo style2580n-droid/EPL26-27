@@ -6388,13 +6388,19 @@ function TodayWidget({favTeams, onSelectMatch}) {
                 {g.home} vs {g.away}
                 <span style={{color:T.dim, fontSize:10.5}}> · {g.date===todayStr?"오늘":"내일"} {g.time}</span>
               </div>
-              {g.probs && (
-                <div style={{fontSize:10.5, color:T.muted, whiteSpace:"nowrap", marginLeft:8}}>
-                  {pct(g.probs.home)} · {pct(g.probs.draw)} · {pct(g.probs.away)}
-                </div>
-              )}
+              <div style={{display:"flex", alignItems:"center", gap:8, marginLeft:8}}>
+                {g.probs && (
+                  <div style={{fontSize:10.5, color:T.muted, whiteSpace:"nowrap"}}>
+                    {pct(g.probs.home)} · {pct(g.probs.draw)} · {pct(g.probs.away)}
+                  </div>
+                )}
+                <span style={{fontSize:11, color:T.accent, fontWeight:800}}>▶</span>
+              </div>
             </button>
           ))}
+          <div style={{fontSize:10.5, color:T.dim, textAlign:"center", marginTop:2}}>
+            👆 탭하면 아래 예측 도구에 그 매치업이 바로 세팅됩니다
+          </div>
         </div>
       )}
     </Card>
@@ -6460,6 +6466,9 @@ function PredictTab({home, away, setHome, setAway, sims, setSims, stage, setStag
     <div>
       <TodayWidget favTeams={favTeams} onSelectMatch={onSelectMatch}/>
       <HiddenTossupPanel onPick={(h,a)=>{ setHome(h); setAway(a); if(typeof window!=="undefined") window.scrollTo({top:0,behavior:"smooth"}); }}/>
+      <div style={{fontSize:11.5, color:T.muted, fontWeight:700, margin:"14px 4px 6px"}}>
+        🔧 직접 매치업 선택 (위 목록과 별개 — 아무 두 팀이나 골라서 가상 예측)
+      </div>
       <Card>
         <div style={{display:"flex", gap:8, alignItems:"flex-end"}}>
           <GroupedTeamSelect value={home} onChange={setHome} label="🏠 홈팀" exclude={away}/>

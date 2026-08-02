@@ -944,7 +944,8 @@ function mlAdjustedLambda(lambda, mlSkew) {
 }
 
 function getHandicapProbs(scoreCounts, totalSims) {
-  const handicaps = [-1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5];
+  // 2026-08-02 확장: 8개리그 앱과 동일하게 ±1.5 → ±3으로 확장.
+  const handicaps = [-3, -2.5, -2, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2, 2.5, 3];
   const result = {};
   for (const h of handicaps) {
     let cover = 0;
@@ -5234,15 +5235,20 @@ const GROUPS = (() => {
 const pct = x => (typeof x === "number" && !isNaN(x)) ? (x*100).toFixed(1)+"%" : "-";
 
 function TeamCrest({name, size=16}) {
-  const [err, setErr] = useState(false);
+  const [errCount, setErrCount] = useState(0);
   // 2026-08-01 수정: CLUB_LOGOS(하드코딩, EPL 20개 팀 로컬 이미지)에 없으면
   // PIPELINE_LOGOS_FRIENDLY(친선전 상대팀 원격 로고 URL, collect_logos_
   // multileague.py가 TheSportsDB에서 채움)를 2순위로 시도한다 — 예전엔
   // CLUB_LOGOS에 없는 팀(친선전 상대 등)은 무조건 텍스트 약어만 나왔었다.
-  const url = ((typeof CLUB_LOGOS !== "undefined") ? CLUB_LOGOS[name] : "")
+  const baseUrl = ((typeof CLUB_LOGOS !== "undefined") ? CLUB_LOGOS[name] : "")
     || ((typeof PIPELINE_LOGOS_FRIENDLY !== "undefined" && PIPELINE_LOGOS_FRIENDLY) ? PIPELINE_LOGOS_FRIENDLY[name] : "");
   const abbr = (typeof CLUB_ABBR !== "undefined" && CLUB_ABBR[name]) ? CLUB_ABBR[name] : (name ? name.slice(0,3) : "");
-  if (!url || err) {
+  // 2026-08-02 추가: 한 화면(일정 등)에 크레스트 이미지가 수십 개 동시에
+  // 뜨다 보니, 이미지 자체는 멀쩡한데(URL 직접 열면 정상 로드 확인됨 —
+  // 사용자 제보로 실측) 브라우저 동시연결 제한/일시적 응답 실패로 가끔
+  // 깨지는 경우가 있었다. 완전히 텍스트로 폴백하기 전에 캐시버스터를
+  // 붙여서 한 번 더 시도 — 그래도 안 되면(errCount>=2) 텍스트 약어로.
+  if (!baseUrl || errCount >= 2) {
     return (
       <span style={{display:"inline-flex", alignItems:"center", justifyContent:"center",
         minWidth:size+6, height:size, padding:"0 3px", borderRadius:4, background:T.surface,
@@ -5250,8 +5256,9 @@ function TeamCrest({name, size=16}) {
         verticalAlign:"middle", letterSpacing:0.3}}>{abbr}</span>
     );
   }
+  const url = errCount === 0 ? baseUrl : `${baseUrl}${baseUrl.includes("?")?"&":"?"}retry=${errCount}`;
   return (
-    <img src={url} alt={abbr} onError={()=>setErr(true)}
+    <img src={url} alt={abbr} onError={()=>setErrCount(c => c + 1)}
       style={{width:size, height:size, objectFit:"contain", verticalAlign:"middle", display:"inline-block"}}/>
   );
 }
@@ -6361,8 +6368,8 @@ function TodayWidget({favTeams, onSelectMatch}) {
   if (!upcoming.length && !(favTeams||[]).length) return null;
 
   return (
-    <Card style={{marginBottom:10}}>
-      <SectionTitle sub="오늘·내일 예정된 경기 (⭐ 관심 팀 우선 표시)">📌 오늘의 경기</SectionTitle>
+    <CollapsibleSection title="📌 오늘의 경기" defaultOpen={false}>
+      <div style={{fontSize:11, color:T.dim, marginBottom:8}}>오늘·내일 예정된 경기 (⭐ 관심 팀 우선 표시)</div>
       {favStandings.length > 0 && (
         <div style={{display:"flex", flexWrap:"wrap", gap:6, marginBottom:10}}>
           {favStandings.map(s => (
@@ -6403,7 +6410,7 @@ function TodayWidget({favTeams, onSelectMatch}) {
           </div>
         </div>
       )}
-    </Card>
+    </CollapsibleSection>
   );
 }
 
